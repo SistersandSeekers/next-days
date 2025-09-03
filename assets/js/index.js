@@ -1,5 +1,6 @@
 let replenData = {};
 
+// --- File handling for Replenishment CSV ---
 const dropArea = document.getElementById('drop-area');
 const fileInput = document.getElementById('csvFile');
 const fileNameDisplay = document.getElementById('file-name');
@@ -45,8 +46,9 @@ function handleFile(file) {
   reader.readAsText(file, 'UTF-8');
 }
 
+// --- Parser for replenishment CSV ---
 function parseCSV(content) {
-  const delimiter = ',';  // <-- CSV is comma-separated
+  const delimiter = ',';
   const lines = content.trim().split('\n');
 
   function clean(cell) {
@@ -81,6 +83,50 @@ function parseCSV(content) {
   return data;
 }
 
+// --- Parser for pasted CSV demand file (Next Days) ---
+function parseDemandCSV(content) {
+  const lines = content.trim().split("\n");
+  const headers = lines[0].split("\t").map(h => h.trim()); // Tab separated!
+
+  const skuIndex = headers.findIndex(h => /item/i.test(h));
+  const qtyIndex = headers.findIndex(h => /requested/i.test(h));
+
+  if (skuIndex === -1 || qtyIndex === -1) {
+    throw new Error("CSV must contain Item and Requested columns");
+  }
+
+  const demand = {};
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+
+    const row = lines[i].split("\t").map(c => c.replace(/^"|"$/g, "").trim());
+    const sku = row[skuIndex];
+    const qty = parseInt(row[qtyIndex] || "0", 10);
+
+    if (sku && qty > 0) {
+      demand[sku] = (demand[sku] || 0) + qty;
+    }
+  }
+  return demand;
+}
+
+// --- Old parser for pasted error log text ---
+function extractErrorLogSKUs(text) {
+  const lines = text.split('\n');
+  const skuCounts = {};
+
+  for (const line of lines) {
+    const match = line.match(/for\s+(\w+)\s+\(x(\d+)\)/i);
+    if (match) {
+      const sku = match[1];
+      const qty = parseInt(match[2], 10);
+      skuCounts[sku] = (skuCounts[sku] || 0) + qty;
+    }
+  }
+  return skuCounts;
+}
+
+// --- Location parsing + sorting ---
 function parseLocation(loc) {
   const match = loc.match(/^([A-Z]+\d+)\.C(\d+)\.S(\d+)$/);
   if (!match) return { parsed: false, aisle: '', col: 0, shelf: 0 };
@@ -96,62 +142,29 @@ function pickLocationSorter([locA], [locB]) {
   const parsedA = parseLocation(locA);
   const parsedB = parseLocation(locB);
 
-  const isAParsed = parsedA.parsed;
-  const isBParsed = parsedB.parsed;
-
-  if (isAParsed && isBParsed) {
-    // Both are bin-style, compare aisle/col/shelf
+  if (parsedA.parsed && parsedB.parsed) {
     if (parsedA.aisle !== parsedB.aisle) return parsedA.aisle.localeCompare(parsedB.aisle);
     if (parsedA.col !== parsedB.col) return parsedA.col - parsedB.col;
     return parsedA.shelf - parsedB.shelf;
   }
-
-  if (isAParsed && !isBParsed) {
-    // Parsed bin locations always come first
-    return -1;
-  }
-
-  if (!isAParsed && isBParsed) {
-    return 1;
-  }
-
-  // Neither parsed: compare alphabetically
+  if (parsedA.parsed && !parsedB.parsed) return -1;
+  if (!parsedA.parsed && parsedB.parsed) return 1;
   return locA.localeCompare(locB);
 }
 
-document.getElementById("csvFile").addEventListener("change", function(event) {
-  const file = event.target.files[0];
-  if (!file) return;
+// --- Main processing ---
+function processData() {
+  const logText = document.getElementById("errorLog").value.trim();
 
-  const reader = new FileReader();
+  let demandData;
 
-  reader.onload = function(e) {
-    const content = e.target.result;
-    replenData = parseCSV(content);}
-  reader.readAsText(file, "UTF-8");
-});
-
-  function extractErrorLogSKUs(text) {
-    const lines = text.split('\n');
-    const skuCounts = {};
-
-    for (const line of lines) {
-      const match = line.match(/for\s+(\w+)\s+\(x(\d+)\)/i);
-      if (match) {
-        const sku = match[1];
-        const qty = parseInt(match[2], 10);
-        skuCounts[sku] = (skuCounts[sku] || 0) + qty;
-      }
-    }
-
-    return skuCounts;
+  // Detect demand CSV vs old log
+  if (logText.includes("\t") && logText.split("\n")[0].includes("Item")) {
+    demandData = parseDemandCSV(logText);
+  } else {
+    demandData = extractErrorLogSKUs(logText);
   }
 
-  function processData() {
-  const logText = document.getElementById("errorLog").value;
-  const demandData = extractErrorLogSKUs(logText);
-
-  // Step 1: Create all pick tasks with quantities
   const pickTasks = [];
 
   for (const sku of Object.keys(demandData)) {
@@ -174,7 +187,6 @@ document.getElementById("csvFile").addEventListener("change", function(event) {
         picks.push({ location: `❌ More required than on replen sheet: ${toPick}`, qty: 0 });
       }
 
-      // Add all of these individual tasks to the big list (so we can sort globally)
       for (const p of picks) {
         pickTasks.push({
           sku,
@@ -185,7 +197,6 @@ document.getElementById("csvFile").addEventListener("change", function(event) {
         });
       }
     } else {
-      // No stock at all
       pickTasks.push({
         sku,
         required,
@@ -196,10 +207,8 @@ document.getElementById("csvFile").addEventListener("change", function(event) {
     }
   }
 
-  // Step 2: Globally sort the pick tasks by location
   pickTasks.sort((a, b) => pickLocationSorter([a.location], [b.location]));
 
-  // Step 3: Group back into rows for your table
   const rows = {};
   for (const task of pickTasks) {
     if (!rows[task.sku]) {
@@ -209,8 +218,6 @@ document.getElementById("csvFile").addEventListener("change", function(event) {
         picks: []
       };
     }
-
-    // Display with qty only if multi-location is needed
     if (task.multi && task.qty > 0) {
       rows[task.sku].picks.push(`${task.location} (${task.qty})`);
     } else {
@@ -218,7 +225,6 @@ document.getElementById("csvFile").addEventListener("change", function(event) {
     }
   }
 
-  // Step 4: Render your table
   let html = "<h3>Next Days</h3><table><tr><th>SKU</th><th>Quantity</th><th>From Location</th></tr>";
   for (const row of Object.values(rows)) {
     const availableData = replenData[row.sku] || { total: 0 };
