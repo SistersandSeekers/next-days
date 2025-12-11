@@ -11,7 +11,12 @@
 <body>
   <header>
     <img src="assets/images/S_S_Logos-01_320x.avif" alt="Italian Trulli">
-    <h1><em>Next Days</em></h1>
+    <h1><em>Simple Location Finder</em></h1>
+    <ul>
+      <li><a href="index.html">Home</a></li>
+      <li><a href="news.asp">News</a></li>
+
+    </ul>
   </header>
   <div class="text-area">
     <textarea id="errorLog" placeholder="Paste next days in here...." rows="10"></textarea>
@@ -23,11 +28,6 @@
     </label>
     <input type="file" id="csvFile" accept=".csv" style="display: none;">
     <div id="file-name"></div>
-    <label>
-      <input type="checkbox" id="prioritizeB">
-      Prioritise B locations first
-    </label>
-
     <button onclick="processData()">Check Replenishment</button>
   </div>
   <div id="results"></div>

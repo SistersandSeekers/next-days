@@ -1,11 +1,12 @@
 let replenData = {};
+let prioritizeB = false; // Controlled by the checkbox
 
 // --- File handling for Replenishment CSV ---
-const dropArea = document.getElementById('drop-area');
-const fileInput = document.getElementById('csvFile');
-const fileNameDisplay = document.getElementById('file-name');
+const dropArea = document.getElementById("drop-area");
+const fileInput = document.getElementById("csvFile");
+const fileNameDisplay = document.getElementById("file-name");
 
-fileInput.addEventListener('change', (event) => {
+fileInput.addEventListener("change", (event) => {
   const file = event.target.files[0];
   if (file) {
     fileNameDisplay.textContent = `Selected file: ${file.name}`;
@@ -13,23 +14,23 @@ fileInput.addEventListener('change', (event) => {
   }
 });
 
-['dragenter', 'dragover'].forEach(eventName => {
+["dragenter", "dragover"].forEach((eventName) => {
   dropArea.addEventListener(eventName, (e) => {
     e.preventDefault();
     e.stopPropagation();
-    dropArea.classList.add('dragover');
+    dropArea.classList.add("dragover");
   });
 });
 
-['dragleave', 'drop'].forEach(eventName => {
+["dragleave", "drop"].forEach((eventName) => {
   dropArea.addEventListener(eventName, (e) => {
     e.preventDefault();
     e.stopPropagation();
-    dropArea.classList.remove('dragover');
+    dropArea.classList.remove("dragover");
   });
 });
 
-dropArea.addEventListener('drop', (e) => {
+dropArea.addEventListener("drop", (e) => {
   const file = e.dataTransfer.files[0];
   if (file) {
     fileNameDisplay.textContent = `Selected file: ${file.name}`;
@@ -39,24 +40,42 @@ dropArea.addEventListener('drop', (e) => {
 
 function handleFile(file) {
   const reader = new FileReader();
-  reader.onload = function(e) {
+  reader.onload = function (e) {
     const content = e.target.result;
     replenData = parseCSV(content);
   };
-  reader.readAsText(file, 'UTF-8');
+  reader.readAsText(file, "UTF-8");
 }
 
-// --- Parser for replenishment CSV ---
+// --- Parser for replenishment CSV (flexible headers) ---
 function parseCSV(content) {
-  const delimiter = ',';
-  const lines = content.trim().split('\n');
+  const delimiter = ",";
+  const lines = content.trim().split("\n");
 
   function clean(cell) {
     if (typeof cell !== "string") return "";
     return cell.replace(/^"|"$/g, "").trim();
   }
 
-  const headers = lines[0].split(delimiter).map(h => h.trim().replace(/^"+|"+$/g, ''));
+  // Parse headers
+  const headers = lines[0]
+    .split(delimiter)
+    .map((h) => h.trim().replace(/^"+|"+$/g, ""));
+
+  // Flexible header resolution
+  const itemIndex = headers.findIndex((h) =>
+    /^(item code|itemcode|sku)$/i.test(h),
+  );
+  const locIndex = headers.findIndex((h) =>
+    /^(from location|location barcode|location)$/i.test(h),
+  );
+  const qtyIndex = headers.findIndex((h) =>
+    /^(from quantity|qty|quantity|stock count)$/i.test(h),
+  );
+
+  if (itemIndex === -1 || locIndex === -1 || qtyIndex === -1) {
+    throw new Error("CSV must contain item, location, and quantity columns");
+  }
 
   const data = {};
 
@@ -64,19 +83,15 @@ function parseCSV(content) {
     if (!lines[i].trim()) continue;
 
     const row = lines[i].split(delimiter).map(clean);
-    const rowData = {};
-    headers.forEach((h, j) => {
-      rowData[h] = row[j] || "";
-    });
-
-    const sku = rowData["Item Code"];
-    const location = rowData["From Location"];
-    const qty = parseInt(rowData["From Quantity"] || "0", 10);
+    const sku = row[itemIndex];
+    const location = row[locIndex];
+    const qty = parseInt(row[qtyIndex] || "0", 10);
 
     if (sku && location && !isNaN(qty)) {
       if (!data[sku]) data[sku] = { total: 0, locations: {} };
       data[sku].total += qty;
-      data[sku].locations[location] = (data[sku].locations[location] || 0) + qty;
+      data[sku].locations[location] =
+        (data[sku].locations[location] || 0) + qty;
     }
   }
 
@@ -86,20 +101,23 @@ function parseCSV(content) {
 // --- Parser for pasted CSV demand file (Next Days) ---
 function parseDemandCSV(content) {
   const lines = content.trim().split("\n");
-  const headers = lines[0].split("\t").map(h => h.trim()); // Tab separated!
+  const headers = lines[0].split("\t").map((h) => h.trim()); // Tab separated!
 
-  const skuIndex = headers.findIndex(h => /item/i.test(h));
-  const qtyIndex = headers.findIndex(h => /requested/i.test(h));
+  // Be flexible: accept old and new names
+  const skuIndex = headers.findIndex((h) => /^(item|itemcode|sku)$/i.test(h));
+  const qtyIndex = headers.findIndex((h) => /^(requested|qty|qty)$/i.test(h)); // includes QTy
 
   if (skuIndex === -1 || qtyIndex === -1) {
-    throw new Error("CSV must contain Item and Requested columns");
+    throw new Error(
+      "CSV must contain an item column (Item or ItemCode) and a quantity column (Requested or QTy)",
+    );
   }
 
   const demand = {};
   for (let i = 1; i < lines.length; i++) {
     if (!lines[i].trim()) continue;
 
-    const row = lines[i].split("\t").map(c => c.replace(/^"|"$/g, "").trim());
+    const row = lines[i].split("\t").map((c) => c.replace(/^"|"$/g, "").trim());
     const sku = row[skuIndex];
     const qty = parseInt(row[qtyIndex] || "0", 10);
 
@@ -112,7 +130,7 @@ function parseDemandCSV(content) {
 
 // --- Old parser for pasted error log text ---
 function extractErrorLogSKUs(text) {
-  const lines = text.split('\n');
+  const lines = text.split("\n");
   const skuCounts = {};
 
   for (const line of lines) {
@@ -129,12 +147,12 @@ function extractErrorLogSKUs(text) {
 // --- Location parsing + sorting ---
 function parseLocation(loc) {
   const match = loc.match(/^([A-Z]+\d+)\.C(\d+)\.S(\d+)$/);
-  if (!match) return { parsed: false, aisle: '', col: 0, shelf: 0 };
+  if (!match) return { parsed: false, aisle: "", col: 0, shelf: 0 };
   return {
     parsed: true,
     aisle: match[1],
     col: parseInt(match[2], 10),
-    shelf: parseInt(match[3], 10)
+    shelf: parseInt(match[3], 10),
   };
 }
 
@@ -142,11 +160,36 @@ function pickLocationSorter([locA], [locB]) {
   const parsedA = parseLocation(locA);
   const parsedB = parseLocation(locB);
 
+  // Helper: B -> C -> A -> others
+  function aislePriority(aisle) {
+    if (!aisle) return 999;
+    const letter = aisle.charAt(0).toUpperCase();
+    if (letter === "B") return 0;
+    if (letter === "C") return 1;
+    if (letter === "A") return 2;
+    return 3; // everything else after B/C/A
+  }
+
   if (parsedA.parsed && parsedB.parsed) {
-    if (parsedA.aisle !== parsedB.aisle) return parsedA.aisle.localeCompare(parsedB.aisle);
-    if (parsedA.col !== parsedB.col) return parsedA.col - parsedB.col;
+    if (prioritizeB) {
+      const prA = aislePriority(parsedA.aisle);
+      const prB = aislePriority(parsedB.aisle);
+
+      // First: B, then C, then A, then others
+      if (prA !== prB) return prA - prB;
+    }
+
+    // Within same aisle priority, keep your original ordering
+    if (parsedA.aisle !== parsedB.aisle) {
+      return parsedA.aisle.localeCompare(parsedB.aisle);
+    }
+    if (parsedA.col !== parsedB.col) {
+      return parsedA.col - parsedB.col;
+    }
     return parsedA.shelf - parsedB.shelf;
   }
+
+  // Fall back for unparsable locations
   if (parsedA.parsed && !parsedB.parsed) return -1;
   if (!parsedA.parsed && parsedB.parsed) return 1;
   return locA.localeCompare(locB);
@@ -154,6 +197,10 @@ function pickLocationSorter([locA], [locB]) {
 
 // --- Main processing ---
 function processData() {
+  // Read checkbox state each time
+  const cb = document.getElementById("prioritizeB");
+  prioritizeB = cb ? cb.checked : false;
+
   const logText = document.getElementById("errorLog").value.trim();
 
   let demandData;
@@ -173,7 +220,9 @@ function processData() {
     let toPick = required;
 
     if (availableData.total > 0) {
-      const sortedLocations = Object.entries(availableData.locations).sort(pickLocationSorter);
+      const sortedLocations = Object.entries(availableData.locations).sort(
+        pickLocationSorter,
+      );
 
       const picks = [];
       for (const [location, qty] of sortedLocations) {
@@ -184,7 +233,10 @@ function processData() {
       }
 
       if (toPick > 0) {
-        picks.push({ location: `❌ More required than on replen sheet: ${toPick}`, qty: 0 });
+        picks.push({
+          location: `❌ More required than on replen sheet: ${toPick}`,
+          qty: 0,
+        });
       }
 
       for (const p of picks) {
@@ -193,16 +245,16 @@ function processData() {
           required,
           location: p.location,
           qty: p.qty,
-          multi: picks.length > 1
+          multi: picks.length > 1,
         });
       }
     } else {
       pickTasks.push({
         sku,
         required,
-        location: '—',
+        location: "—",
         qty: 0,
-        multi: false
+        multi: false,
       });
     }
   }
@@ -215,7 +267,7 @@ function processData() {
       rows[task.sku] = {
         sku: task.sku,
         required: task.required,
-        picks: []
+        picks: [],
       };
     }
     if (task.multi && task.qty > 0) {
@@ -225,17 +277,28 @@ function processData() {
     }
   }
 
-  let html = "<h3>Next Days</h3><table><tr><th>SKU</th><th>Quantity</th><th>From Location</th></tr>";
+  let html =
+    "<h3>Next Days</h3><table><tr><th>SKU</th><th>Quantity</th><th>From Location</th></tr>";
   for (const row of Object.values(rows)) {
     const availableData = replenData[row.sku] || { total: 0 };
     const enough = availableData.total >= row.required;
 
-    html += `<tr class="${enough ? 'enough' : 'notenough'}">
+    html += `<tr class="${enough ? "enough" : "notenough"}">
       <td>${row.sku}</td>
       <td>${row.required}</td>
-      <td>${row.picks.join('<br>')}</td>
+      <td>${row.picks.join("<br>")}</td>
     </tr>`;
   }
   html += "</table>";
   document.getElementById("results").innerHTML = html;
+}
+
+// --- Optional: re-run when the B checkbox changes ---
+const prioritizeBCheckbox = document.getElementById("prioritizeB");
+if (prioritizeBCheckbox) {
+  prioritizeBCheckbox.addEventListener("change", () => {
+    if (document.getElementById("errorLog").value.trim()) {
+      processData();
+    }
+  });
 }
