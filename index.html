@@ -23,14 +23,20 @@
     </label>
     <input type="file" id="csvFile" accept=".csv" style="display: none;">
     <div id="file-name"></div>
-    <label>
-      <input type="checkbox" id="prioritizeB">
-      Prioritise B locations first
-    </label>
+    <div class="sort-options">
+      <label>
+        <input type="checkbox" id="prioritizeB">
+        Prioritise B locations first
+      </label>
+      <label>
+        <input type="checkbox" id="alphabeticalOrder">
+        SKU's in alphabetical order
+      </label>
+    </div>
 
     <button onclick="processData()">Check Replenishment</button>
   </div>
   <div id="results"></div>
 </body>
-<script src="assets/js/index.js"></script>
+<script src="assets/js/index.js?v=20260721-2"></script>
 </html>

@@ -1,5 +1,22 @@
 let replenData = {};
 let prioritizeB = false; // Controlled by the checkbox
+let latestRows = [];
+
+function normalizeHeader(header) {
+  return String(header || "")
+    .replace(/^\uFEFF/, "")
+    .replace(/^"+|"+$/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
+}
+
+function splitPastedRow(row) {
+  if (row.includes("\t")) {
+    return row.split("\t");
+  }
+  return row.trim().split(/\s{2,}/);
+}
 
 // --- File handling for Replenishment CSV ---
 const dropArea = document.getElementById("drop-area");
@@ -60,17 +77,17 @@ function parseCSV(content) {
   // Parse headers
   const headers = lines[0]
     .split(delimiter)
-    .map((h) => h.trim().replace(/^"+|"+$/g, ""));
+    .map(normalizeHeader);
 
   // Flexible header resolution
   const itemIndex = headers.findIndex((h) =>
-    /^(item code|itemcode|sku)$/i.test(h),
+    ["item", "itemcode", "sku"].includes(h),
   );
   const locIndex = headers.findIndex((h) =>
-    /^(from location|location barcode|location)$/i.test(h),
+    ["fromlocation", "locationbarcode", "location"].includes(h),
   );
   const qtyIndex = headers.findIndex((h) =>
-    /^(from quantity|qty|quantity|stock count)$/i.test(h),
+    ["fromquantity", "qty", "quantity", "stockcount"].includes(h),
   );
 
   if (itemIndex === -1 || locIndex === -1 || qtyIndex === -1) {
@@ -101,11 +118,15 @@ function parseCSV(content) {
 // --- Parser for pasted CSV demand file (Next Days) ---
 function parseDemandCSV(content) {
   const lines = content.trim().split("\n");
-  const headers = lines[0].split("\t").map((h) => h.trim()); // Tab separated!
+  const headers = splitPastedRow(lines[0]).map(normalizeHeader);
 
   // Be flexible: accept old and new names
-  const skuIndex = headers.findIndex((h) => /^(item|itemcode|sku)$/i.test(h));
-  const qtyIndex = headers.findIndex((h) => /^(requested|qty|qty)$/i.test(h)); // includes QTy
+  const skuIndex = headers.findIndex((h) =>
+    ["item", "itemcode", "sku"].includes(h),
+  );
+  const qtyIndex = headers.findIndex((h) =>
+    ["requested", "qty", "quantity"].includes(h),
+  );
 
   if (skuIndex === -1 || qtyIndex === -1) {
     throw new Error(
@@ -117,7 +138,9 @@ function parseDemandCSV(content) {
   for (let i = 1; i < lines.length; i++) {
     if (!lines[i].trim()) continue;
 
-    const row = lines[i].split("\t").map((c) => c.replace(/^"|"$/g, "").trim());
+    const row = splitPastedRow(lines[i]).map((c) =>
+      c.replace(/^"|"$/g, "").trim(),
+    );
     const sku = row[skuIndex];
     const qty = parseInt(row[qtyIndex] || "0", 10);
 
@@ -206,7 +229,16 @@ function processData() {
   let demandData;
 
   // Detect demand CSV vs old log
-  if (logText.includes("\t") && logText.split("\n")[0].includes("Item")) {
+  const firstRowHeaders = splitPastedRow(logText.split("\n")[0]).map(
+    normalizeHeader,
+  );
+  const looksLikeDemandCSV =
+    firstRowHeaders.some((h) => ["item", "itemcode", "sku"].includes(h)) &&
+    firstRowHeaders.some((h) =>
+      ["requested", "qty", "quantity"].includes(h),
+    );
+
+  if (looksLikeDemandCSV) {
     demandData = parseDemandCSV(logText);
   } else {
     demandData = extractErrorLogSKUs(logText);
@@ -277,9 +309,26 @@ function processData() {
     }
   }
 
+  latestRows = Object.values(rows);
+  renderResults();
+}
+
+function renderResults() {
+  const alphabeticalOrder = document.getElementById("alphabeticalOrder");
+  const displayRows = [...latestRows];
+
+  if (alphabeticalOrder && alphabeticalOrder.checked) {
+    displayRows.sort((a, b) =>
+      a.sku.localeCompare(b.sku, undefined, {
+        numeric: true,
+        sensitivity: "base",
+      }),
+    );
+  }
+
   let html =
     "<h3>Next Days</h3><table><tr><th>SKU</th><th>Quantity</th><th>From Location</th></tr>";
-  for (const row of Object.values(rows)) {
+  for (const row of displayRows) {
     const availableData = replenData[row.sku] || { total: 0 };
     const enough = availableData.total >= row.required;
 
@@ -291,6 +340,11 @@ function processData() {
   }
   html += "</table>";
   document.getElementById("results").innerHTML = html;
+}
+
+const alphabeticalOrderCheckbox = document.getElementById("alphabeticalOrder");
+if (alphabeticalOrderCheckbox) {
+  alphabeticalOrderCheckbox.addEventListener("change", renderResults);
 }
 
 // --- Optional: re-run when the B checkbox changes ---
