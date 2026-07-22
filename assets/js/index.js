@@ -18,6 +18,14 @@ function splitPastedRow(row) {
   return row.trim().split(/\s{2,}/);
 }
 
+function detectDelimiter(headerRow) {
+  return [",", "\t", ";"].reduce((best, candidate) =>
+    headerRow.split(candidate).length > headerRow.split(best).length
+      ? candidate
+      : best,
+  );
+}
+
 // --- File handling for Replenishment CSV ---
 const dropArea = document.getElementById("drop-area");
 const fileInput = document.getElementById("csvFile");
@@ -66,8 +74,8 @@ function handleFile(file) {
 
 // --- Parser for replenishment CSV (flexible headers) ---
 function parseCSV(content) {
-  const delimiter = ",";
-  const lines = content.trim().split("\n");
+  const lines = content.trim().split(/\r?\n/);
+  const delimiter = detectDelimiter(lines[0]);
 
   function clean(cell) {
     if (typeof cell !== "string") return "";
